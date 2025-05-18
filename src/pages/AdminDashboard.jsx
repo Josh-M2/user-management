@@ -53,17 +53,25 @@ const AdminDashboard = () => {
 
   const handleCreateuser = async () => {
     console.log("form: ", form);
-    const { data, error } = await supabaseAdmin.auth.admin.createUser({
-      email: form.email,
-      password: form.password,
-      email_confirm: true,
-      app_metadata: {
-        role: form.role,
-      },
-      user_metadata: {
+
+    const { data, error } = await supabase.functions.invoke("create-user", {
+      body: {
+        email: form.email,
+        password: form.password,
         role: form.role,
       },
     });
+    // const { data, error } = await supabaseAdmin.auth.admin.createUser({
+    //   email: form.email,
+    //   password: form.password,
+    //   email_confirm: true,
+    //   app_metadata: {
+    //     role: form.role,
+    //   },
+    //   user_metadata: {
+    //     role: form.role,
+    //   },
+    // });
 
     if (error) return console.error("createing user error: ", error);
 
@@ -122,10 +130,13 @@ const AdminDashboard = () => {
       .eq("id", id);
 
     if (error) return console.error("error delete: ", error);
+
     console.log("handledeleteUser: ", data);
 
-    const { error: deleteUserFromAuthError } =
-      await supabaseAdmin.auth.admin.deleteUser(id);
+    const { error: deleteUserFromAuthError } = await supabase.functions.invoke(
+      "delete-user",
+      { body: { id } }
+    );
 
     if (deleteUserFromAuthError)
       return console.error(
