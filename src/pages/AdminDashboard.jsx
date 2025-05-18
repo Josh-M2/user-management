@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { supabaseAdmin } from "../supabaseAdmin";
 import { supabase } from "../supabaseClient";
-import { updateUserMetaData } from "../lib/updateUserMetaData";
 
 const AdminDashboard = () => {
   const [isAdmin, setIsAdmin] = useState(false);
@@ -88,6 +87,20 @@ const AdminDashboard = () => {
 
   const handleUpdateRole = async (id, role) => {
     console.log("parameters", id, role);
+
+    const { data: functionData, error: functionError } =
+      await supabase.functions.invoke("update-user-auth-role", {
+        body: {
+          id: id,
+          role: role,
+        },
+      });
+
+    if (functionError)
+      return console.error("error updating auth user role: ", functionError);
+
+    console.log("functionData: ", functionData);
+
     const { data, error } = await supabase
       .from("profiles")
       .update({ role })
@@ -96,7 +109,7 @@ const AdminDashboard = () => {
     if (error) return console.error("error update: ", error);
     console.log("handleUpdateRole: ", data);
 
-    if (role === "admin") await updateUserMetaData(id, role);
+    // if (role === "admin") await updateUserMetaData(id, role);
 
     initUsers();
   };
