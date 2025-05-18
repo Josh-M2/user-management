@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { supabaseAdmin } from "../supabaseAdmin";
 import { supabase } from "../supabaseClient";
-import { updateUserMetaData } from "../lib/updateUserMetaData";
 
 const AdminDashboard = () => {
   const [isAdmin, setIsAdmin] = useState(false);
@@ -54,17 +53,25 @@ const AdminDashboard = () => {
 
   const handleCreateuser = async () => {
     console.log("form: ", form);
-    const { data, error } = await supabaseAdmin.auth.admin.createUser({
-      email: form.email,
-      password: form.password,
-      email_confirm: true,
-      app_metadata: {
-        role: form.role,
-      },
-      user_metadata: {
+
+    const { data, error } = await supabase.functions.invoke("create-user", {
+      body: {
+        email: form.email,
+        password: form.password,
         role: form.role,
       },
     });
+    // const { data, error } = await supabaseAdmin.auth.admin.createUser({
+    //   email: form.email,
+    //   password: form.password,
+    //   email_confirm: true,
+    //   app_metadata: {
+    //     role: form.role,
+    //   },
+    //   user_metadata: {
+    //     role: form.role,
+    //   },
+    // });
 
     if (error) return console.error("createing user error: ", error);
 
@@ -88,6 +95,20 @@ const AdminDashboard = () => {
 
   const handleUpdateRole = async (id, role) => {
     console.log("parameters", id, role);
+
+    const { data: functionData, error: functionError } =
+      await supabase.functions.invoke("update-user-auth-role", {
+        body: {
+          id: id,
+          role: role,
+        },
+      });
+
+    if (functionError)
+      return console.error("error updating auth user role: ", functionError);
+
+    console.log("functionData: ", functionData);
+
     const { data, error } = await supabase
       .from("profiles")
       .update({ role })
@@ -96,7 +117,7 @@ const AdminDashboard = () => {
     if (error) return console.error("error update: ", error);
     console.log("handleUpdateRole: ", data);
 
-    if (role === "admin") await updateUserMetaData(id, role);
+    // if (role === "admin") await updateUserMetaData(id, role);
 
     initUsers();
   };
@@ -109,10 +130,13 @@ const AdminDashboard = () => {
       .eq("id", id);
 
     if (error) return console.error("error delete: ", error);
+
     console.log("handledeleteUser: ", data);
 
-    const { error: deleteUserFromAuthError } =
-      await supabaseAdmin.auth.admin.deleteUser(id);
+    const { error: deleteUserFromAuthError } = await supabase.functions.invoke(
+      "delete-user",
+      { body: { id } }
+    );
 
     if (deleteUserFromAuthError)
       return console.error(

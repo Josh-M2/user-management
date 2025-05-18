@@ -1,8 +1,7 @@
 import { useState } from "react";
 import { supabase } from "../supabaseClient";
-import { supabaseAdmin } from "../supabaseAdmin";
+
 import { useNavigate } from "react-router-dom";
-import { updateUserMetaData } from "../lib/updateUserMetaData";
 
 const LoginPage = () => {
   const navigate = useNavigate();
@@ -65,10 +64,23 @@ const LoginPage = () => {
 
     if (insertError) return console.error("profile insert error", insertError);
 
-    await updateUserMetaData(data.user.id, role);
+    // await updateUserMetaData(data.user.id, role);
 
     console.log("succesfully signed up");
 
+    const { data: functionData, error: functionError } =
+      await supabase.functions.invoke("update-user-auth-role", {
+        body: {
+          id: data.user.id,
+          role: role,
+        },
+      });
+
+    if (functionError)
+      return console.error("error updating auth user role: ", functionError);
+
+    console.log("functionData: ", functionData);
+    navigate("/admindashboard");
     // const { error: errorSignIN } = await supabase.auth.signInWithPassword({
     //   email,
     //   password,
