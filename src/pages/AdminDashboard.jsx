@@ -1,247 +1,237 @@
-import { useEffect, useState } from "react";
-import { supabaseAdmin } from "../supabaseAdmin";
+import { useCallback, useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { supabase } from "../supabaseClient";
 
-const AdminDashboard = () => {
-  const [isAdmin, setIsAdmin] = useState(false);
+async function invokeAdmin(name, body) {
+  const { data, error } = await supabase.functions.invoke(name, { body });
+  if (!error) return data;
+  let detail = error.message;
+  if (error.context instanceof Response) {
+    try {
+      const payload = await error.context.json();
+      detail = payload.error || detail;
+    } catch {
+      // Keep the SDK error when the response body is not JSON.
+    }
+  }
+  throw new Error(detail);
+}
+
+function initials(email = "") {
+  return email.split("@")[0].slice(0, 2).toUpperCase() || "U";
+}
+
+function joinedDate(value) {
+  if (!value) return "—";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime())
+    ? "—"
+    : new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", year: "numeric" }).format(date);
+}
+
+const roleLabels = { admin: "Administrator", manager: "Manager", staff: "Staff" };
+
+const roleOptions = [
+  { value: "staff", label: "Staff" },
+  { value: "manager", label: "Manager" },
+  { value: "admin", label: "Administrator" },
+];
+
+export default function AdminDashboard() {
+  const navigate = useNavigate();
+  const [user, setUser] = useState(null);
+  const [profile, setProfile] = useState(null);
   const [profiles, setProfiles] = useState([]);
-  const [currentLoggeInUser, setCurrentLoggeInUser] = useState();
-  const [form, setForm] = useState({
-    email: "",
-    password: "",
-    role: "manager",
+  const [form, setForm] = useState({ email: "", password: "", role: "staff" });
+  const [search, setSearch] = useState("");
+  const [roleFilter, setRoleFilter] = useState("all");
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+
+  const load = useCallback(async () => {
+    setError("");
+    try {
+      const { data: authData, error: authError } = await supabase.auth.getUser();
+      if (authError || !authData.user) {
+        navigate("/", { replace: true });
+        return false;
+      }
+      setUser(authData.user);
+      const { data: ownProfile, error: profileError } = await supabase
+        .from("profiles")
+        .select("id, email, role, created_at")
+        .eq("id", authData.user.id)
+        .single();
+      if (profileError || !ownProfile) {
+        throw new Error("Could not load your profile: " + (profileError?.message || "Profile not found"));
+      }
+      setProfile(ownProfile);
+      if (ownProfile.role === "admin" || ownProfile.role === "manager") {
+        const { data, error: listError } = await supabase
+          .from("profiles")
+          .select("id, email, role, created_at")
+          .order("created_at", { ascending: false });
+        if (listError) throw new Error("Could not load users: " + listError.message);
+        setProfiles(data || []);
+      } else {
+        setProfiles([]);
+      }
+      return true;
+    } catch (loadError) {
+      setError(loadError.message || "Could not load the workspace. Please try again.");
+      return false;
+    } finally {
+      setLoading(false);
+    }
+  }, [navigate]);
+
+  useEffect(() => { load(); }, [load]);
+
+  async function runAction(action, successMessage) {
+    setError("");
+    setMessage("");
+    setBusy(true);
+    try {
+      await action();
+      if (await load()) setMessage(successMessage);
+    } catch (actionError) {
+      setError(actionError.message || "The action could not be completed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function createUser(event) {
+    event.preventDefault();
+    runAction(async () => {
+      await invokeAdmin("create-user", form);
+      setForm({ email: "", password: "", role: "staff" });
+    }, "User created successfully.");
+  }
+
+  function changeRole(id, role) {
+    runAction(() => invokeAdmin("update-user-auth-role", { id, role }), "Role updated successfully.");
+  }
+
+  function deleteUser(id, email) {
+    if (!window.confirm("Permanently delete " + email + "? This account cannot be restored.")) return;
+    runAction(() => invokeAdmin("delete-user", { id }), "User deleted successfully.");
+  }
+
+  async function refresh() {
+    setBusy(true);
+    await load();
+    setBusy(false);
+  }
+
+  async function signOut() {
+    const { error: signOutError } = await supabase.auth.signOut();
+    if (signOutError) setError(signOutError.message);
+    else navigate("/", { replace: true });
+  }
+
+  if (loading) {
+    return <main className="loading-screen" aria-live="polite"><span className="brand-mark">U</span><p>Loading your workspace…</p></main>;
+  }
+
+  const isAdmin = profile?.role === "admin";
+  const canViewDirectory = isAdmin || profile?.role === "manager";
+  const adminCount = profiles.filter((item) => item.role === "admin").length;
+  const managerCount = profiles.filter((item) => item.role === "manager").length;
+  const staffCount = profiles.filter((item) => item.role === "staff").length;
+  const filteredProfiles = profiles.filter((item) => {
+    const matchesSearch = item.email.toLowerCase().includes(search.trim().toLowerCase());
+    return matchesSearch && (roleFilter === "all" || item.role === roleFilter);
   });
 
-  const handleChange = (e) => {
-    const { value, name } = e.target;
-    console.log(`changing ${name}: ${value}`);
-    setForm((prev) => ({ ...prev, [name]: value }));
-  };
-
-  useEffect(() => {
-    validateCurrentLogeInUser();
-    initUsers();
-  }, []);
-
-  const validateCurrentLogeInUser = async () => {
-    const { data: userAuth } = await supabase.auth.getSession();
-    console.log("userAuth: ", userAuth);
-    const { data: user } = await supabase.auth.getUser();
-    console.log("user: ", user.user.id);
-    setCurrentLoggeInUser(user);
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("role")
-      .eq("id", user.user.id)
-      .single();
-    if (profile?.role === "admin") {
-      console.log("validateCurrentLogeInUser: ", profile);
-      setIsAdmin(true);
-      initUsers();
-    }
-  };
-
-  const initUsers = async () => {
-    const { data: profiles, error } = await supabase
-      .from("profiles")
-      .select("*");
-
-    if (error) return console.error("error initusers: ", error);
-    setProfiles(profiles);
-    console.log("profiles:", profiles);
-  };
-
-  const handleCreateuser = async () => {
-    console.log("form: ", form);
-
-    const { data, error } = await supabase.functions.invoke("create-user", {
-      body: {
-        email: form.email,
-        password: form.password,
-        role: form.role,
-      },
-    });
-    // const { data, error } = await supabaseAdmin.auth.admin.createUser({
-    //   email: form.email,
-    //   password: form.password,
-    //   email_confirm: true,
-    //   app_metadata: {
-    //     role: form.role,
-    //   },
-    //   user_metadata: {
-    //     role: form.role,
-    //   },
-    // });
-
-    if (error) return console.error("createing user error: ", error);
-
-    if (!data.user) return console.error("no data use found: ");
-
-    console.log("handleCreateuser: ", data);
-
-    const { error: insertError } = await supabase.from("profiles").insert([
-      {
-        id: data.user.id,
-        email: data.user.email,
-        role: form.role,
-      },
-    ]);
-
-    if (insertError) return console.error("profile insert error", insertError);
-
-    console.log("succesfully signed up");
-    initUsers();
-  };
-
-  const handleUpdateRole = async (id, role) => {
-    console.log("parameters", id, role);
-
-    const { data: functionData, error: functionError } =
-      await supabase.functions.invoke("update-user-auth-role", {
-        body: {
-          id: id,
-          role: role,
-        },
-      });
-
-    if (functionError)
-      return console.error("error updating auth user role: ", functionError);
-
-    console.log("functionData: ", functionData);
-
-    const { data, error } = await supabase
-      .from("profiles")
-      .update({ role })
-      .eq("id", id);
-
-    if (error) return console.error("error update: ", error);
-    console.log("handleUpdateRole: ", data);
-
-    // if (role === "admin") await updateUserMetaData(id, role);
-
-    initUsers();
-  };
-
-  const handledeleteUser = async (id) => {
-    console.log("parameters", id);
-    const { data, error } = await supabase
-      .from("profiles")
-      .delete()
-      .eq("id", id);
-
-    if (error) return console.error("error delete: ", error);
-
-    console.log("handledeleteUser: ", data);
-
-    const { error: deleteUserFromAuthError } = await supabase.functions.invoke(
-      "delete-user",
-      { body: { id } }
-    );
-
-    if (deleteUserFromAuthError)
-      return console.error(
-        "deleteUserFromAuthError: ",
-        deleteUserFromAuthError
-      );
-
-    initUsers();
-  };
-
-  if (!isAdmin) return <p className="text-center mt-10">access denied</p>;
-
   return (
-    <div className="flex mx-20">
-      <div className="flex flex-col">
-        <div>
-          <h1 className="text-xl mb-10"> admin user management</h1>
+    <main className="app-shell">
+      <header className="app-header">
+        <div className="brand"><span className="brand-mark">U</span><span>User Management</span></div>
+        <div className="header-account">
+          <span className="account-avatar" aria-hidden="true">{initials(user?.email)}</span>
+          <span className="account-details"><strong>{user?.email}</strong><small>{roleLabels[profile?.role] || "Member"}</small></span>
+          <button type="button" className="text-button" onClick={signOut}>Sign out</button>
+        </div>
+      </header>
+
+      <div className="workspace">
+        <div className="page-heading">
+          <div><span className="eyebrow">Workspace / People</span><h1>{canViewDirectory ? "Team directory" : "Your account"}</h1><p className="muted">{isAdmin ? "Manage team members and keep access up to date." : canViewDirectory ? "Browse team members and their access levels." : "View the details and access level for your account."}</p></div>
+          <button type="button" className="secondary-button" onClick={refresh} disabled={busy}>{busy ? "Working…" : "Refresh data"}</button>
         </div>
 
-        <div></div>
+        {error && <p className="error notice" role="alert">{error}</p>}
+        {message && <p className="success notice" role="status">{message}</p>}
 
-        <div className="">
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              handleCreateuser();
-            }}
-            className="flex flex-col gap-y-5"
-          >
-            add users
-            <input
-              name="email"
-              placeholder="Email"
-              value={form.email}
-              onChange={handleChange}
-              className="border"
-            />
-            <input
-              name="password"
-              placeholder="Password"
-              type="password"
-              className="border"
-              value={form.password}
-              onChange={handleChange}
-            />
-            <select
-              name="role"
-              className="border rounded p-2"
-              value={form.role}
-              onChange={handleChange}
-            >
-              <option value="manager">manager</option>
-              <option value="admin">admin</option>
-            </select>
-            <button type="submit" className="border cursor-pointer">
-              add
-            </button>
-          </form>
-        </div>
+        {profile && !canViewDirectory && (
+          <section className="panel profile-panel">
+            <div className="section-heading"><div><h2>Your profile</h2><p className="muted">An administrator can update your role.</p></div></div>
+            <div className="profile-summary"><span className="member-avatar large" aria-hidden="true">{initials(profile.email)}</span><div><strong>{profile.email}</strong><span className="role-badge staff">Staff</span></div></div>
+            <dl className="profile-details">
+              <div><dt>Email address</dt><dd>{profile.email}</dd></div>
+              <div><dt>Access level</dt><dd>Staff</dd></div>
+              <div><dt>Joined</dt><dd>{joinedDate(profile.created_at)}</dd></div>
+            </dl>
+          </section>
+        )}
 
-        <div>
-          <table className="w-full text-left border mt-4">
-            <thead className="bg-gray-100">
-              <tr>
-                <th className="p-2">Email</th>
-                <th className="p-2">Role</th>
-                <th className="p-2">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {profiles.map((user) =>
-                user.email === currentLoggeInUser?.user?.email ? (
-                  ""
-                ) : (
-                  <tr key={user.id} className="border-t">
-                    <td className="p-2">{user.email}</td>
-                    <td className="p-2">
-                      <select
-                        value={user.role}
-                        onChange={(e) =>
-                          handleUpdateRole(user.id, e.target.value)
-                        }
-                        className="border rounded p-1"
-                      >
-                        <option value="manager">manager</option>
-                        <option value="admin">admin</option>
-                      </select>
-                    </td>
-                    <td className="p-2">
-                      <button
-                        onClick={() => handledeleteUser(user.id)}
-                        className="border cursor-pointer"
-                      >
-                        Delete
-                      </button>
-                    </td>
-                  </tr>
-                )
+        {canViewDirectory && (
+          <>
+            <section className="stats-grid" aria-label="Team overview">
+              <div className="stat-card"><span>Total members</span><strong>{profiles.length}</strong><small>People in this workspace</small></div>
+              <div className="stat-card"><span>Administrators</span><strong>{adminCount}</strong><small>Can manage accounts</small></div>
+              <div className="stat-card"><span>Managers</span><strong>{managerCount}</strong><small>Can browse the directory</small></div>
+              <div className="stat-card"><span>Staff</span><strong>{staffCount}</strong><small>Can view their own profile</small></div>
+            </section>
+
+            <div className={isAdmin ? "dashboard-grid" : "dashboard-grid read-only"}>
+              {isAdmin && (
+              <section className="panel create-panel">
+                <div className="section-heading"><div><span className="eyebrow">Add member</span><h2>Create a user</h2><p className="muted">Set up an account and choose its access level.</p></div></div>
+                <form onSubmit={createUser} className="stack">
+                  <label>Email address<input type="email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} autoComplete="off" placeholder="teammate@company.com" required /></label>
+                  <label>Password<input type="password" value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} autoComplete="new-password" placeholder="At least 6 characters" minLength={6} required /></label>
+                  <label>Role<select value={form.role} onChange={(event) => setForm({ ...form, role: event.target.value })}>{roleOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
+                  <p className="field-note">Staff see their own profile. Managers can browse the directory. Administrators can manage accounts.</p>
+                  <button type="submit" className="primary-button" disabled={busy}>{busy ? "Working…" : "Create user"}</button>
+                </form>
+              </section>
               )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-  );
-};
 
-export default AdminDashboard;
+              <section className="panel members-panel">
+                <div className="section-heading"><div><span className="eyebrow">Directory</span><h2>Team members <span className="count-badge">{profiles.length}</span></h2><p className="muted">{isAdmin ? "Review access and manage existing accounts." : "A read-only view of your team and its roles."}</p></div></div>
+                <div className="list-toolbar">
+                  <label className="visually-hidden" htmlFor="member-search">Search members</label>
+                  <input id="member-search" type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search by email" />
+                  <label className="visually-hidden" htmlFor="role-filter">Filter by role</label>
+                  <select id="role-filter" value={roleFilter} onChange={(event) => setRoleFilter(event.target.value)}><option value="all">All roles</option><option value="admin">Administrators</option><option value="manager">Managers</option><option value="staff">Staff</option></select>
+                </div>
+                <div className="table-scroll">
+                  <table>
+                    <thead><tr><th scope="col">Member</th><th scope="col">Role</th><th scope="col">Joined</th>{isAdmin && <th scope="col">Actions</th>}</tr></thead>
+                    <tbody>
+                      {filteredProfiles.map((item) => (
+                        <tr key={item.id}>
+                          <td><div className="member-cell"><span className="member-avatar" aria-hidden="true">{initials(item.email)}</span><span className="member-name">{item.email}{item.id === user?.id && <span className="you">You</span>}</span></div></td>
+                          <td>{!isAdmin || item.id === user?.id ? <span className={"role-badge " + item.role}>{roleLabels[item.role] || item.role}</span> : (
+                            <select className="role-select" aria-label={"Role for " + item.email} value={item.role} disabled={busy} onChange={(event) => changeRole(item.id, event.target.value)}>{roleOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select>
+                          )}</td>
+                          <td className="date-cell">{joinedDate(item.created_at)}</td>
+                          {isAdmin && <td>{item.id !== user?.id && <button type="button" className="danger-button" disabled={busy} onClick={() => deleteUser(item.id, item.email)}>Delete</button>}</td>}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {filteredProfiles.length === 0 && <p className="empty-state">{profiles.length === 0 ? "No users yet. Create the first one using the form." : "No members match your search."}</p>}
+                </div>
+              </section>
+            </div>
+          </>
+        )}
+      </div>
+    </main>
+  );
+}

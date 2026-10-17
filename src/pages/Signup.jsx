@@ -1,207 +1,65 @@
 import { useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import { supabase } from "../supabaseClient";
+import AuthShell from "../components/AuthShell";
 
-import { useNavigate } from "react-router-dom";
-
-const LoginPage = () => {
+export default function SignupPage() {
   const navigate = useNavigate();
-  const [form, setForm] = useState({
-    email: "",
-    password: "",
-    repassword: "",
-  });
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
-  const [error, setError] = useState({
-    emailError: "",
-    passwordError: "",
-    repasswordError: "",
-  });
-
-  const handleChange = (e) => {
-    const { value, name } = e.target;
-    setForm((prev) => ({ ...prev, [name]: value }));
-  };
-
-  const validatePassword = (password, repassword) => {
-    if (password !== repassword) {
-      return "Passwords do not match";
-    }
-    return "";
-  };
-
-  const handleSubmitSignup = async () => {
-    const { email, password, repassword } = form;
-    const repasswordError = validatePassword(password, repassword);
-    const role = "admin";
-
-    if (repasswordError) {
-      setError((prev) => ({
-        ...prev,
-        repasswordError: repasswordError,
-      }));
+  async function handleSubmit(event) {
+    event.preventDefault();
+    setError("");
+    setMessage("");
+    if (password !== confirmPassword) {
+      setError("Passwords do not match.");
       return;
     }
-    setError({ emailError: "", passwordError: "", repasswordError: "" });
 
-    const { data, error } = await supabase.auth.signUp({
-      email,
-      password,
-    });
-
-    if (error) return console.error("signup error: ", error);
-
-    if (!data.user) return console.error("no data use found: ");
-
-    console.log("signup user: ", data.user);
-
-    const { error: insertError } = await supabase.from("profiles").insert([
-      {
-        id: data.user.id,
-        email: data.user.email,
-        role: role,
-      },
-    ]);
-
-    if (insertError) return console.error("profile insert error", insertError);
-
-    // await updateUserMetaData(data.user.id, role);
-
-    console.log("succesfully signed up");
-
-    const { data: functionData, error: functionError } =
-      await supabase.functions.invoke("update-user-auth-role", {
-        body: {
-          id: data.user.id,
-          role: role,
-        },
-      });
-
-    if (functionError)
-      return console.error("error updating auth user role: ", functionError);
-
-    console.log("functionData: ", functionData);
-    navigate("/admindashboard");
-    // const { error: errorSignIN } = await supabase.auth.signInWithPassword({
-    //   email,
-    //   password,
-    // });
-
-    // if (errorSignIN) {
-    //   return console.error("errorSignIN: ", errorSignIN);
-    // } else {
-    //   navigate("/admindashboard");
-    // }
-  };
+    setBusy(true);
+    try {
+      const { data, error: signUpError } = await supabase.auth.signUp({ email: email.trim(), password });
+      if (signUpError) throw signUpError;
+      if (data.session) {
+        navigate("/admindashboard", { replace: true });
+      } else {
+        setMessage("Check your email to confirm your account, then return here to sign in.");
+      }
+    } catch (signUpError) {
+      setError(signUpError.message || "Could not create your account. Please try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
 
   return (
-    <div className="flex min-h-full flex-1 flex-col justify-center px-6 py-12 lg:px-8">
-      <div className="sm:mx-auto sm:w-full sm:max-w-sm">
-        <img
-          alt="Your Company"
-          src="https://tailwindcss.com/plus-assets/img/logos/mark.svg?color=indigo&shade=600"
-          className="mx-auto h-10 w-auto"
-        />
-        <h2 className="mt-10 text-center text-2xl font-bold tracking-tight text-gray-900">
-          Register your account
-        </h2>
-      </div>
-
-      <div className="mt-10 sm:mx-auto sm:w-full sm:max-w-sm">
-        <form
-          onSubmit={(e) => {
-            e.preventDefault();
-            handleSubmitSignup();
-          }}
-          className="space-y-6"
-        >
-          {error.repasswordError && (
-            <p className="text-red-600 text-sm">{error.repasswordError}</p>
-          )}
-
-          <div>
-            <label
-              htmlFor="email"
-              className="block text-sm font-medium text-gray-900"
-            >
-              Email address
-            </label>
-            <div className="mt-2">
-              <input
-                id="email"
-                name="email"
-                type="email"
-                required
-                autoComplete="email"
-                className="block w-full rounded-md bg-white px-3 py-1.5 text-base text-gray-900 border border-gray-300 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-600 sm:text-sm"
-                value={form.email}
-                onChange={handleChange}
-              />
-            </div>
-          </div>
-
-          <div>
-            <label
-              htmlFor="password"
-              className="block text-sm font-medium text-gray-900"
-            >
-              Password
-            </label>
-            <div className="mt-2">
-              <input
-                id="password"
-                name="password"
-                type="password"
-                required
-                autoComplete="current-password"
-                className="block w-full rounded-md bg-white px-3 py-1.5 text-base text-gray-900 border border-gray-300 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-600 sm:text-sm"
-                value={form.password}
-                onChange={handleChange}
-              />
-            </div>
-          </div>
-
-          <div>
-            <label
-              htmlFor="repassword"
-              className="block text-sm font-medium text-gray-900"
-            >
-              Confirm Password
-            </label>
-            <div className="mt-2">
-              <input
-                id="repassword"
-                name="repassword"
-                type="password"
-                required
-                className="block w-full rounded-md bg-white px-3 py-1.5 text-base text-gray-900 border border-gray-300 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-600 sm:text-sm"
-                value={form.repassword}
-                onChange={handleChange}
-              />
-            </div>
-          </div>
-
-          <div>
-            <button
-              type="submit"
-              className="flex w-full justify-center rounded-md bg-indigo-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-600"
-            >
-              Sign up
+    <AuthShell eyebrow="Join the workspace" title="Create your account" description="Start with a staff profile. An admin can grant you more access later.">
+      <form onSubmit={handleSubmit} className="stack">
+        <label>Email address
+          <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="email" placeholder="you@company.com" required />
+        </label>
+        <label>Password
+          <span className="password-field">
+            <input type={showPassword ? "text" : "password"} value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="new-password" minLength={6} placeholder="At least 6 characters" required />
+            <button type="button" className="password-toggle" onClick={() => setShowPassword((value) => !value)} aria-label={showPassword ? "Hide password" : "Show password"}>
+              {showPassword ? "Hide" : "Show"}
             </button>
-          </div>
-        </form>
-
-        <p className="mt-10 text-center text-sm text-gray-500">
-          Already have an account?{" "}
-          <a
-            href="/"
-            className="font-semibold text-indigo-600 hover:text-indigo-500"
-          >
-            Sign in here
-          </a>
-        </p>
-      </div>
-    </div>
+          </span>
+        </label>
+        <label>Confirm password
+          <input type={showPassword ? "text" : "password"} value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} autoComplete="new-password" placeholder="Enter it again" required />
+        </label>
+        {error && <p className="error" role="alert">{error}</p>}
+        {message && <p className="success" role="status">{message}</p>}
+        <button type="submit" className="primary-button" disabled={busy}>{busy ? "Creating account…" : "Create account"}</button>
+      </form>
+      <p className="footer-note">Already have an account? <Link to="/">Sign in</Link></p>
+    </AuthShell>
   );
-};
-
-export default LoginPage;
+}

@@ -1,131 +1,49 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { supabase } from "../supabaseClient";
+import AuthShell from "../components/AuthShell";
 
-const LoginPage = () => {
+export default function LoginPage() {
   const navigate = useNavigate();
-  const [form, setForm] = useState({
-    email: "",
-    password: "",
-  });
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
-  const handleChange = (e) => {
-    const { value, name } = e.target;
-    console.log(`changing ${name}: ${value}`);
-    setForm((prev) => ({ ...prev, [name]: value }));
-  };
-
-  const handleSubmitLogin = async () => {
-    console.log("Form: ", form);
-    const { email, password } = form;
-
-    const { error: errorSignIN } = await supabase.auth.signInWithPassword({
-      email: email,
-      password: password,
-    });
-
-    if (errorSignIN) return console.error("error: ", errorSignIN);
-
-    navigate("/admindashboard");
-  };
+  async function handleSubmit(event) {
+    event.preventDefault();
+    setError("");
+    setBusy(true);
+    try {
+      const { error: signInError } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
+      if (signInError) throw signInError;
+      navigate("/admindashboard", { replace: true });
+    } catch (signInError) {
+      setError(signInError.message || "Could not sign in. Please try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
 
   return (
-    <>
-      <div className="flex min-h-full flex-1 flex-col justify-center px-6 py-12 lg:px-8">
-        <div className="sm:mx-auto sm:w-full sm:max-w-sm">
-          <img
-            alt="Your Company"
-            src="https://tailwindcss.com/plus-assets/img/logos/mark.svg?color=indigo&shade=600"
-            className="mx-auto h-10 w-auto"
-          />
-          <h2 className="mt-10 text-center text-2xl/9 font-bold tracking-tight text-gray-900">
-            Sign in to your account
-          </h2>
-        </div>
-
-        <div className="mt-10 sm:mx-auto sm:w-full sm:max-w-sm">
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              handleSubmitLogin();
-            }}
-            className="space-y-6"
-          >
-            <div>
-              <label
-                htmlFor="email"
-                className="block text-sm/6 font-medium text-gray-900"
-              >
-                Email address
-              </label>
-              <div className="mt-2">
-                <input
-                  id="email"
-                  name="email"
-                  type="email"
-                  required
-                  autoComplete="email"
-                  className="block w-full rounded-md bg-white px-3 py-1.5 text-base text-gray-900 outline-1 -outline-offset-1 outline-gray-300 placeholder:text-gray-400 focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600 sm:text-sm/6"
-                  value={form.email}
-                  onChange={handleChange}
-                />
-              </div>
-            </div>
-
-            <div>
-              <div className="flex items-center justify-between">
-                <label
-                  htmlFor="password"
-                  className="block text-sm/6 font-medium text-gray-900"
-                >
-                  Password
-                </label>
-                <div className="text-sm">
-                  <a
-                    href="#"
-                    className="font-semibold text-indigo-600 hover:text-indigo-500"
-                  >
-                    Forgot password?
-                  </a>
-                </div>
-              </div>
-              <div className="mt-2">
-                <input
-                  id="password"
-                  name="password"
-                  type="password"
-                  required
-                  autoComplete="current-password"
-                  className="block w-full rounded-md bg-white px-3 py-1.5 text-base text-gray-900 outline-1 -outline-offset-1 outline-gray-300 placeholder:text-gray-400 focus:outline-2 focus:-outline-offset-2 focus:outline-indigo-600 sm:text-sm/6"
-                  value={form.password}
-                  onChange={handleChange}
-                />
-              </div>
-            </div>
-
-            <div>
-              <button
-                type="submit"
-                className="flex w-full justify-center rounded-md bg-indigo-600 px-3 py-1.5 text-sm/6 font-semibold text-white shadow-xs hover:bg-indigo-500 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-indigo-600"
-              >
-                Sign in
-              </button>
-            </div>
-          </form>
-
-          <p className="mt-10 text-center text-sm/6 text-gray-500">
-            Sign up{" "}
-            <a
-              href="/signup"
-              className="font-semibold text-indigo-600 hover:text-indigo-500"
-            >
-              here
-            </a>
-          </p>
-        </div>
-      </div>
-    </>
+    <AuthShell eyebrow="Welcome back" title="Sign in to your workspace" description="Your team directory is just a sign in away.">
+      <form onSubmit={handleSubmit} className="stack">
+        <label>Email address
+          <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="email" placeholder="you@company.com" required />
+        </label>
+        <label>Password
+          <span className="password-field">
+            <input type={showPassword ? "text" : "password"} value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" placeholder="Enter your password" required />
+            <button type="button" className="password-toggle" onClick={() => setShowPassword((value) => !value)} aria-label={showPassword ? "Hide password" : "Show password"}>
+              {showPassword ? "Hide" : "Show"}
+            </button>
+          </span>
+        </label>
+        {error && <p className="error" role="alert">{error}</p>}
+        <button type="submit" className="primary-button" disabled={busy}>{busy ? "Signing in…" : "Sign in"}</button>
+      </form>
+      <p className="footer-note">New to the workspace? <Link to="/signup">Create an account</Link></p>
+    </AuthShell>
   );
-};
-
-export default LoginPage;
+}
