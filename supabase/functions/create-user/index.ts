@@ -1,82 +1,56 @@
-// Follow this setup guide to integrate the Deno language server with your editor:
-// https://deno.land/manual/getting_started/setup_your_environment
-// This enables autocomplete, go to definition, etc.
-
-// Setup type definitions for built-in Supabase Runtime APIs
-
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { admin, isRole, json, preflight, requireAdmin } from "../_shared/admin.ts";
 
-
-import {supabase} from "../_shared/supabaseClient.ts";
-
-import {corsHeaders} from "../_shared/corsConfig.ts";
-
-
-console.log('Create User Function started');
-
-Deno.serve(async (req)=>{
-  if (req.method === 'OPTIONS') {
-    return new Response('ok', {
-      headers: corsHeaders
-    });
-  }
+Deno.serve(async (req) => {
+  const early = preflight(req);
+  if (early) return early;
   try {
-    const { email, password, role } = await req.json();
-    
-    if (!email || !email || !role) {
-      return new Response(JSON.stringify({
-        error: "Missing 'id' or 'role'"
-      }), {
-        status: 400,
-        headers: corsHeaders
-      });
+    const access = await requireAdmin(req);
+    if (access.error) return access.error;
+
+    const body = await req.json();
+    const email = typeof body.email === "string" ? body.email.trim() : "";
+    const password = body.password;
+    const role = body.role;
+    if (!email || typeof password !== "string" || password.length < 6 || !isRole(role)) {
+      return json({ error: "Provide an email, a password of at least 6 characters, and a valid role." }, 400);
     }
 
-    // Update user's metadata in auth.users
-    const {data, error} = await supabase.auth.admin.createUser({ 
-      email: email,
-      password: password,
+    const { data, error } = await admin.auth.admin.createUser({
+      email,
+      password,
       email_confirm: true,
-      app_metadata: {
-        role: role,
-      },
-      user_metadata: {
-        role: role,
-      },
     });
+    if (error || !data.user) return json({ error: error?.message || "Could not create user" }, 400);
 
-    if(error) {
-      return new Response(JSON.stringify(error), {
-      headers: corsHeaders
-    });
-  }
-    
-    
-    return new Response(JSON.stringify(data), {
-      headers: {
-        ...corsHeaders,
-        'Content-Type': 'application/json'
+    const { data: newProfile, error: profileError } = await admin.from("profiles")
+      .select("id")
+      .eq("id", data.user.id)
+      .single();
+    if (profileError || !newProfile) {
+      await admin.auth.admin.deleteUser(data.user.id);
+      console.error("Profile trigger did not create a row", profileError);
+      return json({ error: "Could not create a profile. Apply the profiles migration first." }, 500);
+    }
+
+    // The auth trigger creates a staff profile. Apply an elevated role only
+    // after the authenticated admin has chosen it.
+    if (role !== "staff") {
+      const { error: roleError } = await admin.from("profiles")
+        .update({ role })
+        .eq("id", data.user.id)
+        .select("id")
+        .single();
+      if (roleError) {
+        await admin.auth.admin.deleteUser(data.user.id);
+        console.error("Could not set role", roleError);
+        return json({ error: "Could not set the new user's role. Check the profiles migration." }, 500);
       }
-    });
+    }
 
-  } catch (err) {
-    console.error("Unexpected error:", err);
-    return new Response(JSON.stringify({
-      error: "Invalid request or internal error"
-    }), {
-      status: 500,
-      headers: corsHeaders
-    });
+    return json({ user: { id: data.user.id, email: data.user.email, role } }, 201);
+  } catch (error) {
+    console.error("create-user failed", error);
+    return json({ error: "Could not create user" }, 500);
   }
 });
-/* To invoke locally:
-
-  1. Run `supabase start` (see: https://supabase.com/docs/reference/cli/supabase-start)
-  2. Make an HTTP request:
-
-  curl -i --location --request POST 'http://127.0.0.1:54321/functions/v1/create-user' \
-    --header 'Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0' \
-    --header 'Content-Type: application/json' \
-    --data '{"name":"Functions"}'
-
-*/
